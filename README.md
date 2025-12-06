@@ -1,67 +1,82 @@
-# assembly-calculator
-Assembly program written for ARM on Macos that is a basic calculator
+# ARM Assembly Calculator
 
-ARM64 means 64 bit architecture (8 bytes)
-meaning memory addresses are always 64 bits
+A command-line calculator built in ARM64 assembly for macOS that performs basic arithmetic operations (+, -, *, /) on single-digit numbers (0-9).
 
-will be command line arguments
-./calculator 5 + 3
+```bash
+./calculator 5 + 3    # Prints: 8
+./calculator 9 - 4    # Prints: 5
+./calculator 2 '*' 3  # Prints: 6
+./calculator 8 / 2    # Prints: 4
+```
 
-os will read this and handle allocating space for this in stack
-it will also place argument count in x0 (argc) and sp will point to argc 
+**Note:** Use quotes around `*` because it's a shell wildcard!
 
-Lower memory addresses (top of stack)
-    ↓
-    +------------------+  ← sp points here initially
-    | argc             |  (8 bytes) - number of arguments
-    +------------------+  
-    | argv[0] pointer  |  (8 bytes) - pointer to program name string
-    +------------------+
-    | argv[1] pointer  |  (8 bytes) - pointer to first argument string
-    +------------------+
-    | argv[2] pointer  |  (8 bytes) - pointer to second argument
-    +------------------+
-    | argv[3] pointer  |  (8 bytes) - pointer to third argument
-    +------------------+
-    | NULL (0)         |  (8 bytes) - marks end of argv
-    +------------------+
-    | environment vars |  (we won't worry about these)
-    ↓
-Higher memory addresses
+---
 
-typically load argc sp into x0
+## Quick Start
 
+### Build
+```bash
+# Assemble
+as -o calculator.o calculator.s
 
-ldr x0, [sp]
-load register (load from data into register)
-[] or dereference: go to address and get value
-ldr x0, [sp]: go to stack pointer address, get value and load into x0
-different from
-mov x9, sp: copy sp's value (which is an address) into x9
+# Link
+ld -o calculator calculator.o -lSystem \
+   -syslibroot `xcrun -sdk macosx --show-sdk-path` \
+   -e _start -arch arm64
+```
 
-sp contains an address (it IS a pointer)
-[sp] is the value stored at that address, which could be another pointer
+### Run
+```bash
+./calculator 1 + 2
+```
 
-EXAMPLE
-sp = 0x7ff8b2c01000  (sp always contains an address)
+---
 
-Memory at 0x7ff8b2c01000: [4]  ← This is argc
+## How It Works (High Level)
 
-mov x9, sp       // x9 = 0x7ff8b2c01000 (copy the address)
-                 // Just register copy, no memory access
+1. **Read arguments** from command line (e.g., "5", "+", "3")
+2. **Convert from ASCII** strings to numbers (e.g., '5' → 5)
+3. **Perform calculation** based on operator
+4. **Convert back to ASCII** (e.g., 8 → '8')
+5. **Print result** to terminal
 
-ldr x9, [sp]     // Go to address 0x7ff8b2c01000
-                 // Read what's there: 4
-                 // x9 = 4
-                 // This reads from memory!
+All done in pure ARM64 assembly - no libraries except system calls!
 
+---
 
+## Core Concepts
 
-LDRB
-load register 1 byte, used with w registers (32 bits/4 bytes) 
+### Registers We Use
 
+Think of registers as super-fast temporary storage built into the CPU:
 
-Because arguemnts from the terminal are stored as strings, the numbers are stored and represented as ascii values
+**For Arguments:**
+- **x0**: How many arguments (argc)
+- **x1**: Pointer to array of argument strings (argv)
+
+**For Working Data:**
+- **x9-x11**: Pointers to our argument strings
+- **w12**: First number (after converting from ASCII)
+- **w13**: Operator character
+- **w14**: Second number
+- **w15**: Result
+
+**For System Calls:**
+- **x16**: Which system call to make (macOS convention)
+
+**Why x vs w?**
+- **x** = 64-bit register (for addresses/pointers)
+- **w** = 32-bit register (for smaller values like our 0-9 numbers)
+
+---
+
+### ASCII Conversion
+
+When you type `./calculator 5 + 3`, the shell stores "5" and "3" as **text characters**, not numbers!
+
+**ASCII Table (relevant part):**
+```
 '0' = 48
 '1' = 49
 '2' = 50
@@ -72,67 +87,318 @@ Because arguemnts from the terminal are stored as strings, the numbers are store
 '7' = 55
 '8' = 56
 '9' = 57
+```
 
-in order to capture the value, it needs to be offset so to get 0 we subtract 48 (the common denominator)
+**String to Number:** Subtract 48
+```assembly
+sub w12, w12, #48   # '5' (53) → 5
+```
 
-general operators though we keep ascii value
-'+' = 43
-'-' = 45
-'*' = 42
-'/' = 47
+**Number to String:** Add 48
+```assembly
+add w15, w15, #48   # 8 → '8' (56)
+```
 
-comparing
-cmp does a subtraction but doesnt store the value, 
-cpu has flag rgisters (conditional flags) with 4 important bits stored in PSTATE
-N = Negative flag
-Z = Zero flag
-C = Carry flag
-V = Overflow flag
+**Why convert?**
+If we did math on ASCII values:
+- '4' (52) + '5' (53) = 105 = ASCII 'i' ❌
+  
+Instead:
+- 4 + 5 = 9 → convert to '9' (57) ✓
 
-branching
-beq reads z flag from PSTATE and expects 1
-bne reads z flag from PSTATE and expets 0
-assembly code is read top to bottom, branching allows the ability to move to other sections of code (branch to a label)
+---
 
-operators
-add destination, value1, value2
+## Step-by-Step Code Walkthrough
 
-Running the code
-as -o calculator.o calculator.s
-ld -o calculator calculator.o -lSystem -syslibroot `xcrun -sdk macosx --show-sdk-path` -e _start -arch arm64
-./calculator value1 operator value 2
+### 1. Get Command-Line Arguments
 
+On macOS with `-lSystem`, arguments arrive in registers:
+- x0 = argc (4 in our case: program name + 3 args)
+- x1 = pointer to argv array
 
+```assembly
+cmp x0, #4       # Check argc == 4
+bne error        # If not, exit with error
+```
 
+### 2. Load Argument Pointers
 
-.global _start
-- makes _start visible to the linker
-- without this _start would only be private to this function, linker needs to find _Start to know where program begins (like public)
+The argv array contains **pointers** to strings, not the strings themselves:
 
+```
+x1 → [ptr to "calculator", ptr to "5", ptr to "+", ptr to "3"]
+      ^                     ^            ^           ^
+      argv[0]              argv[1]      argv[2]    argv[3]
+```
+
+Each pointer is 8 bytes, so we skip 8 to get argv[1]:
+
+```assembly
+ldr x9, [x1, #8]    # x9 = pointer to "5"
+ldr x10, [x1, #16]  # x10 = pointer to "+"
+ldr x11, [x1, #24]  # x11 = pointer to "3"
+```
+
+### 3. Dereference Pointers (Get Actual Characters)
+
+Now follow those pointers to get the characters:
+
+```assembly
+ldrb w12, [x9]     # w12 = '5' (ASCII 53)
+ldrb w13, [x10]    # w13 = '+'
+ldrb w14, [x11]    # w14 = '3' (ASCII 51)
+```
+
+`ldrb` = Load Register Byte (just 1 byte, not all 8)
+
+### 4. Convert ASCII to Numbers
+
+```assembly
+sub w12, w12, #48  # w12 = 5
+sub w14, w14, #48  # w14 = 3
+```
+
+### 5. Check Operator and Branch
+
+Compare the operator and jump to appropriate code:
+
+```assembly
+cmp w13, #43       # Is it '+' (ASCII 43)?
+beq add_op         # Yes, go to add
+cmp w13, #45       # Is it '-' (ASCII 45)?
+beq sub_op         # Yes, go to subtract
+# ... etc
+```
+
+**How `cmp` works:**
+- Internally does subtraction: w13 - 43
+- Sets CPU flags (Z=zero, N=negative, etc.)
+- `beq` checks if Z flag is set (result was zero = equal)
+
+### 6. Perform Calculation
+
+```assembly
+add_op:
+    add w15, w12, w14   # w15 = 5 + 3 = 8
+    b print_positive
+
+sub_op:
+    sub w15, w12, w14   # w15 = w12 - w14
+    cmp w15, #0
+    bmi print_negative  # If negative, handle differently
+    b print_positive
+```
+
+### 7. Handle Negative Numbers
+
+**The Problem:**
+```
+1 - 5 = -4
+-4 + 48 = 44 (ASCII ',') ❌
+```
+
+**The Solution:**
+```assembly
+print_negative:
+    neg w15, w15           # Flip sign: -4 → 4
+    add w15, w15, #48      # Convert to ASCII: '4'
+    
+    # Store "-4\n" in output buffer
+    mov w16, #45           # '-' character
+    strb w16, [x1]         # Store '-'
+    strb w15, [x1, #1]     # Store '4'
+    mov w16, #10           # '\n' newline
+    strb w16, [x1, #2]     # Store newline
+```
+
+`neg` does: 0 - w15 (flips the sign using two's complement)
+
+### 8. Print Result
+
+Use macOS write syscall:
+
+```assembly
+mov x0, #1      # File descriptor: 1 = stdout
+mov x2, #2      # Bytes to write (or 3 for negatives)
+mov x16, #4     # Syscall number: 4 = write
+svc #0x80       # Invoke syscall
+```
+
+### 9. Exit
+
+```assembly
+mov x0, #0      # Exit code: 0 = success
+mov x16, #1     # Syscall number: 1 = exit
+svc #0x80       # Invoke syscall
+```
+
+---
+
+## Deep Dive: Technical Details
+
+### Memory Sections
+
+Your program is divided into sections in RAM:
+
+```
+┌─────────────────┐
+│ .text (code)    │ ← Your instructions execute here
+├─────────────────┤
+│ .data (globals) │ ← output: "0\n" lives here
+├─────────────────┤
+│ .bss (uninit)   │ ← Uninitialized variables
+├─────────────────┤
+│ Heap            │ ← Dynamic allocation (not used here)
+│   ↓ grows       │
+├─────────────────┤
+│   ↑ grows       │
+│ Stack           │ ← Function calls, local variables
+└─────────────────┘
+```
+
+### Accessing .data Variables (macOS)
+
+To get the address of the `output` buffer, we need **two instructions** because:
+- ARM instructions are 32-bit
+- Addresses are 64-bit
+- Can't fit a full address in one instruction!
+
+```assembly
+adrp x1, output@PAGE        # Get 4KB page address
+add x1, x1, output@PAGEOFF  # Add offset within page
+strb w15, [x1]              # Now can store at output
+```
+
+**Why pages?**
+- The OS divides ALL memory into 4KB chunks (pages)
+- For memory management, virtual memory, and protection
+- `@PAGE` = which 4KB page contains the variable
+- `@PAGEOFF` = byte offset within that page
+- Like finding: "Page 10, line 40" in a book
+
+This `@PAGE/@PAGEOFF` syntax is macOS/Mach-O specific.
+
+---
+
+## Program Structure Directives
+
+These lines tell the assembler/linker how to organize your code:
+
+### `.global _start`
+Makes `_start` visible to the linker so it knows where the program begins.
+
+**What's a linker?**
+When building, two tools work together:
+1. **Assembler (`as`)**: Converts `.s` → `.o` (machine code)
+2. **Linker (`ld`)**: Combines `.o` files + libraries → final executable
+
+Think: Assembler makes LEGO pieces, linker connects them together.
+
+### `.data`
+Everything after this goes in the DATA section (initialized variables).
+
+```assembly
 .data
-- tells assembler that everything after this goes into the DATA section of the program
-- this is used for initialised data - variables with starting values
-- in this instance variable "output" has an ascii value of "0\n"
-- we use 0 because we will overwrite it with an actual value later
-- these values live for the lifetime of the program, memory is allocated by os and deallocated when program is done (allocated in RAM)
+output: .ascii "0\n"    # Creates a 2-byte buffer
+```
 
-.text
-- directive that says everything after this foes int he Text section
-- Executable code
+### `.text`
+Everything after this goes in the TEXT section (executable code).
 
-.align 2
-- ensures each instruction is aligned to a 4 byte boundary (2^2 = 4)
-- Arm instructions are 4 bytes each, they must stat at an address divisble by 4
+### `.align 2`
+Ensures instructions align to 4-byte boundaries (2² = 4).
+- ARM instructions are 4 bytes each
+- Must start at addresses divisible by 4
+- Good defensive practice to prevent alignment errors
 
-arguments
-- x0 stores the argc (total count of arguments)
-- x1 stores the address of the location of the argv's
+---
 
-Updating value of output variable
-- Idea is find the page (4kb of allocated chunked storage) that output is on
-- Then find the offset of where output actually resides on that page
-- Add the 2 together to get a full 64 bit address
-- This is a macos convetion, but must be done in 2 parts because arm assembly only allos 32 bit instructions, and an address is always 64 bits
-adrp x1, output@PAGE
-add x1, x1, output@PAGEOFF
-strb w15, [x1]
+## System Calls (macOS)
+
+### Write (Print to Terminal)
+```assembly
+mov x0, #1      # stdout (file descriptor 1)
+mov x1, buffer  # Pointer to data
+mov x2, #2      # Number of bytes
+mov x16, #4     # write syscall
+svc #0x80       # Invoke
+```
+
+### Exit
+```assembly
+mov x0, #0      # Exit code
+mov x16, #1     # exit syscall
+svc #0x80       # Invoke
+```
+
+**macOS Convention:** Syscall number in x16 (Linux uses x8)
+
+---
+
+## Complete Memory Flow Example
+
+Let's trace `./calculator 5 + 3`:
+
+### At Program Start
+```
+x0 = 4 (argc)
+x1 = address of argv array
+
+Memory at [x1]:
+  [x1]      → "calculator"
+  [x1, #8]  → "5"
+  [x1, #16] → "+"
+  [x1, #24] → "3"
+```
+
+### After Loading Pointers
+```
+x9  = address where "5" is stored
+x10 = address where "+" is stored
+x11 = address where "3" is stored
+```
+
+### After Dereferencing
+```
+w12 = '5' (ASCII 53)
+w13 = '+' (ASCII 43)
+w14 = '3' (ASCII 51)
+```
+
+### After ASCII Conversion
+```
+w12 = 5
+w14 = 3
+```
+
+### After Calculation
+```
+w15 = 8
+```
+
+### After Converting Back
+```
+w15 = '8' (ASCII 56)
+```
+
+### In Output Buffer
+```
+output: "8\n"
+```
+
+### Write to Terminal
+```
+Prints: 8
+```
+
+---
+
+## Limitations
+
+- Only handles single-digit inputs (0-9)
+- Division rounds down (integer division)
+- Limited error handling
+- No floating point support
+
+---
+

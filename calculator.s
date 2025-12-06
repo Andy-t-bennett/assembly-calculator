@@ -33,21 +33,29 @@ _start:
 
 add_op:
     add w15, w12, w14
-    b print
+    cmp w15, #0
+    bmi print_negative
+    b print_positive
 
 sub_op:
     sub w15, w12, w14
-    b print
+    cmp w15, #0
+    bmi print_negative
+    b print_positive
 
 mul_op:
     mul w15, w12, w14
-    b print
+    cmp w15, #0
+    bmi print_negative
+    b print_positive
 
 div_op:
     sdiv w15, w12, w14
-    b print
+    cmp w15, #0
+    bmi print_negative
+    b print_positive
 
-print:
+print_positive:
     add w15, w15, #48
     
     adrp x1, output@PAGE
@@ -63,7 +71,28 @@ print:
     mov x16, #1
     svc #0x80
 
-error:
+print_negative:
+    neg w15, w15
+    add w15, w15, #48
+    
+    adrp x1, output@PAGE
+    add x1, x1, output@PAGEOFF
+    
+    # ascii value for '-'
+    mov w9, #45
+    strb w9, [x1]
+    strb w15, [x1, #1]
+    # ascii value for '\n'
+    mov w9, #10
+    strb w9, [x1, #2]
+
     mov x0, #1
+    mov x2, #3
+    mov x16, #4
+    svc #0x80
+    
+    mov x0, #0
     mov x16, #1
     svc #0x80
+
+error:
